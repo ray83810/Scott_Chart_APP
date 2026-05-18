@@ -76,10 +76,14 @@
                     .then(data => {
                         if (data) {
                             if (Array.isArray(data) && data.length > 0) {
-                                // 為了向下相容，如果雲端目前是舊版的陣列格式，則只載入 charts
+                                // 將陣列設定到圖表中
                                 setCharts(data);
+                                // 檢查第一個圖表是否有內嵌的 countryOverrides，如果有則抽取出來並套用
+                                if (data[0] && data[0].countryOverrides) {
+                                    setCountryOverrides(data[0].countryOverrides);
+                                }
                             } else if (data.charts) {
-                                // 支援新版的物件格式，同時還原 charts 與 countryOverrides 設定
+                                // 支援過渡期間可能存成物件的格式
                                 if (data.charts.length > 0) setCharts(data.charts);
                                 if (data.countryOverrides) setCountryOverrides(data.countryOverrides);
                             }
@@ -93,11 +97,15 @@
             const handleSaveToServer = async () => {
                 setIsSaving(true);
                 try {
-                    // 將 charts 與 countryOverrides 設定檔一併打包送出
-                    const payload = {
-                        charts: charts,
-                        countryOverrides: countryOverrides
-                    };
+                    // 將 countryOverrides 設定檔內嵌至 charts 的第一個元素中，以保持陣列(Array)格式傳送
+                    // 避免後端 Apps Script 解析錯誤
+                    const payload = charts.map((chart, index) => {
+                        if (index === 0) {
+                            return { ...chart, countryOverrides: countryOverrides };
+                        }
+                        return chart;
+                    });
+
                     const response = await fetch('https://script.google.com/macros/s/AKfycbxShNJ785Ax_-zSg9JQ9Qrba_Af81mRDjZi11iDcCs0Ip4fUYKB8puyLfRAPe8Wj3O_aQ/exec', {
                         method: 'POST',
                         headers: {
