@@ -173,134 +173,180 @@
                         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                         const rows = XLSX.utils.sheet_to_json(firstSheet, {header: 1, raw: false, defval: ""});
                         
+                        if (rows.length < 2) {
+                            showToast("⚠️ Excel file is empty or has invalid format.");
+                            return;
+                        }
+
+                        // 判斷上傳的檔案是 Agent 還是 Online
+                        let fileType = ""; // "agent", "online", or ""
+                        const fileNameLower = file.name.toLowerCase();
+                        if (fileNameLower.includes("agent")) {
+                            fileType = "agent";
+                        } else if (fileNameLower.includes("online")) {
+                            fileType = "online";
+                        }
+
+                        const headers = rows[0].map(h => h ? h.toString().trim().toLowerCase() : "");
+                        
+                        const clientIdx = headers.findIndex(h => h.includes('client'));
+                        const yearIdx = headers.findIndex(h => h.includes('year'));
+                        const monthIdx = headers.findIndex(h => h.includes('month'));
+                        const tnpsIdx = headers.findIndex(h => h === 'tnps');
+                        const countIdx = headers.findIndex(h => h.includes('count') && h.includes('tnps'));
+                        const proIdx = headers.findIndex(h => h.includes('pro') && h.includes('tnps'));
+                        const detIdx = headers.findIndex(h => h.includes('det') && h.includes('tnps'));
+
+                        // 當無法精準對應表頭時的後備指標
+                        const finalClientIdx = clientIdx !== -1 ? clientIdx : 0;
+                        const finalYearIdx = yearIdx !== -1 ? yearIdx : 1;
+                        const finalMonthIdx = monthIdx !== -1 ? monthIdx : 2;
+                        const finalTnpsIdx = tnpsIdx !== -1 ? tnpsIdx : 3;
+                        const finalCountIdx = countIdx !== -1 ? countIdx : 4;
+                        const finalProIdx = proIdx !== -1 ? proIdx : 5;
+                        const finalDetIdx = detIdx !== -1 ? detIdx : 6;
+
                         setCharts(prevCharts => {
                             const newCharts = JSON.parse(JSON.stringify(prevCharts));
-                            let currentType = "";
-                            
-                            const matchesProgram = (cellStr, chartTitle) => {
-                                const title = chartTitle.toLowerCase();
-                                if (cellStr === 'samsung care+' && title.includes('samsung')) return true;
-                                if (cellStr === 'asurion tech care' && title.includes('asurion')) return true;
-                                if (cellStr === 'celcomdigi' && title.includes('celcomdigi')) return true;
-                                if (cellStr === 'singtel' && title.includes('singtel')) return true;
-                                if (cellStr === 'm1' && title.includes('m1')) return true;
-                                if (cellStr === 'starhub' && title.includes('starhub')) return true;
-                                if (cellStr === 'ais' && title.includes('ais')) return true;
-                                if (cellStr === 'telstra' && title.includes('telstra')) return true;
-                                if (cellStr === 'true' && title.includes('true')) return true;
-                                if (cellStr === 'fet' && title.includes('fet')) return true;
-                                if (cellStr === 'synnex' && title.includes('synnex')) return true;
-                                return false;
+                            const latestMonthPerChart = {}; // 用於追蹤各專案的最新月份與絕對值以便換算比例
+
+                            const monthNameToIndex = (name) => {
+                                if (!name) return -1;
+                                const n = name.toString().toLowerCase().trim();
+                                if (n.startsWith('jan')) return 0;
+                                if (n.startsWith('feb')) return 1;
+                                if (n.startsWith('mar')) return 2;
+                                if (n.startsWith('apr')) return 3;
+                                if (n.startsWith('may')) return 4;
+                                if (n.startsWith('jun')) return 5;
+                                if (n.startsWith('jul')) return 6;
+                                if (n.startsWith('aug')) return 7;
+                                if (n.startsWith('sep')) return 8;
+                                if (n.startsWith('oct')) return 9;
+                                if (n.startsWith('nov')) return 10;
+                                if (n.startsWith('dec')) return 11;
+                                return -1;
                             };
-                            
-                            for (let r = 0; r < rows.length; r++) {
-                                const row = rows[r] || [];
-                                let isSectionHeader = false;
-                                for (let c = 0; c < Math.min(row.length, 3); c++) {
-                                    if (!row[c]) continue;
-                                    const val = row[c].toString().toLowerCase().trim();
-                                    if (val === 'online' || val === 'agent') {
-                                        currentType = val;
-                                        isSectionHeader = true;
-                                        break;
-                                    }
-                                }
-                                if (isSectionHeader) continue;
+
+                            const findMatchedChart = (clientVal, type, chartsList) => {
+                                if (!clientVal) return null;
+                                const cleanClient = clientVal.toString().toLowerCase().trim();
                                 
-                                for (let c = 0; c < row.length; c++) {
-                                    const cell = row[c];
-                                    if (!cell) continue;
-                                    const cellStr = cell.toString().toLowerCase().trim();
-                                    let matchedChart = null;
-                                    for (let chart of newCharts) {
-                                        const titleLower = chart.title.toLowerCase();
-                                        const isAgent = titleLower.includes('agent');
-                                        const chartType = isAgent ? 'agent' : 'online';
-                                        if (currentType && chartType !== currentType) continue;
-                                        if (matchesProgram(cellStr, chart.title)) {
-                                            matchedChart = chart;
-                                            break;
-                                        }
+                                // 排除 Samsung Trade-In，防止誤覆蓋 Samsung Care+
+                                if (cleanClient.includes('trade-in') || cleanClient.includes('tradein')) {
+                                    return null;
+                                }
+
+                                let matchKeyword = cleanClient;
+                                if (cleanClient.includes('asurion')) matchKeyword = 'asurion';
+                                if (cleanClient.includes('celcom')) matchKeyword = 'celcom';
+                                if (cleanClient.includes('samsung')) matchKeyword = 'samsung';
+                                if (cleanClient.includes('singtel')) matchKeyword = 'singtel';
+                                if (cleanClient.includes('starhub')) matchKeyword = 'starhub';
+                                if (cleanClient.includes('ais')) matchKeyword = 'ais';
+                                if (cleanClient.includes('true')) matchKeyword = 'true';
+                                if (cleanClient.includes('telstra')) matchKeyword = 'telstra';
+                                if (cleanClient.includes('fet')) matchKeyword = 'fet';
+                                if (cleanClient.includes('synnex')) matchKeyword = 'synnex';
+                                if (cleanClient.includes('m1')) matchKeyword = 'm1';
+
+                                return chartsList.find(chart => {
+                                    const chartTitleLower = chart.title.toLowerCase();
+                                    const clientMatches = chartTitleLower.includes(matchKeyword);
+                                    if (!clientMatches) return false;
+
+                                    if (type === 'agent') {
+                                        return chartTitleLower.includes('agent');
+                                    } else if (type === 'online') {
+                                        return chartTitleLower.includes('online');
                                     }
-                                    
-                                    if (matchedChart) {
-                                        for (let lookAhead = 1; lookAhead <= 8; lookAhead++) {
-                                            if (r + lookAhead >= rows.length) break;
-                                            const dataRow = rows[r + lookAhead] || [];
-                                            const yearCell = dataRow[c] ? dataRow[c].toString().trim() : '';
-                                            if (yearCell === '2025' || yearCell === '2026') {
-                                                let dataToFill = [];
-                                                for (let m = 1; m <= 12; m++) {
-                                                    const valCell = dataRow[c + m];
-                                                    if (valCell !== undefined && valCell !== null && valCell !== '') {
-                                                        const cleanCell = valCell.toString().replace(/,/g, '').replace(/%/g, '').trim();
-                                                        const val = parseFloat(cleanCell);
-                                                        dataToFill.push(!isNaN(val) ? val.toString() : "");
-                                                    } else {
-                                                        dataToFill.push("");
-                                                    }
-                                                }
-                                                while(dataToFill.length < 12) dataToFill.push("");
-                                                if (yearCell === '2026') matchedChart.solid = dataToFill;
-                                                else if (yearCell === '2025') matchedChart.dotted = dataToFill;
-                                            }
-                                        }
+                                    return true;
+                                });
+                            };
 
-                                        let latestMonthIdx = -1;
-                                        for (let i = 11; i >= 0; i--) {
-                                            if (matchedChart.solid && matchedChart.solid[i] !== "") {
-                                                latestMonthIdx = i;
-                                                break;
-                                            }
-                                        }
-                                        
-                                        const parseNpsValue = (valStr) => {
-                                            if (!valStr) return 0;
-                                            let str = valStr.toString().trim();
-                                            let isPercent = str.includes('%');
-                                            let val = parseFloat(str.replace(/%/g, '').replace(/,/g, ''));
-                                            if (isNaN(val)) return 0;
-                                            if (!isPercent && val > 0 && val <= 1) val *= 100;
-                                            return parseFloat(val.toFixed(1));
+                            const cleanNumString = (val) => {
+                                if (val === undefined || val === null) return "";
+                                return val.toString().replace(/,/g, '').replace(/%/g, '').trim();
+                            };
+
+                            for (let r = 1; r < rows.length; r++) {
+                                const row = rows[r] || [];
+                                const clientVal = row[finalClientIdx];
+                                const yearVal = row[finalYearIdx];
+                                const monthVal = row[finalMonthIdx];
+                                const tnpsVal = row[finalTnpsIdx];
+                                const countVal = row[finalCountIdx];
+                                const proVal = row[finalProIdx];
+                                const detVal = row[finalDetIdx];
+
+                                const monthStr = monthVal ? monthVal.toString().trim().toLowerCase() : "";
+                                const yearStr = yearVal ? yearVal.toString().trim().toLowerCase() : "";
+
+                                // 過濾加總統計行
+                                if (!monthStr || monthStr === "total" || !yearStr || yearStr === "total" || !clientVal || clientVal.toString().toLowerCase().trim() === "total") {
+                                    continue;
+                                }
+
+                                const mIdx = monthNameToIndex(monthStr);
+                                if (mIdx < 0 || mIdx > 11) continue;
+
+                                const chart = findMatchedChart(clientVal, fileType, newCharts);
+                                if (chart) {
+                                    const parsedTnps = parseFloat(cleanNumString(tnpsVal));
+                                    const tnpsString = !isNaN(parsedTnps) ? Math.round(parsedTnps).toString() : "";
+
+                                    if (yearStr === "2026") {
+                                        chart.solid[mIdx] = tnpsString;
+                                    } else if (yearStr === "2025") {
+                                        chart.dotted[mIdx] = tnpsString;
+                                    }
+
+                                    // 追蹤最新月份的基礎資料，以便更新 tNPS Breakdown 的比例數據 (防空、防逗號與百分號)
+                                    const countValParsed = parseInt(cleanNumString(countVal)) || 0;
+                                    const proValParsed = parseInt(cleanNumString(proVal)) || 0;
+                                    const detValParsed = parseInt(cleanNumString(detVal)) || 0;
+
+                                    const currentTrack = latestMonthPerChart[chart.id];
+                                    const isNewer = !currentTrack || 
+                                                    (yearStr === "2026" && currentTrack.yearStr === "2025") ||
+                                                    (yearStr === currentTrack.yearStr && mIdx > currentTrack.mIdx);
+
+                                    if (isNewer) {
+                                        latestMonthPerChart[chart.id] = {
+                                            mIdx: mIdx,
+                                            yearStr: yearStr,
+                                            count: countValParsed,
+                                            pro: proValParsed,
+                                            det: detValParsed
                                         };
-
-                                        const getVal = (rowIdx, colIdx) => {
-                                            const currRow = rows[rowIdx] || [];
-                                            const nextRow = rows[rowIdx + 1] || [];
-                                            if (latestMonthIdx !== -1) {
-                                                const targetCol = currRow[colIdx + 1 + latestMonthIdx];
-                                                if (targetCol !== undefined && targetCol !== null && targetCol !== '') return targetCol;
-                                            }
-                                            return currRow[colIdx + 1] || nextRow[colIdx] || '0';
-                                        };
-
-                                        for (let lookAhead = 0; lookAhead <= 8; lookAhead++) {
-                                            if (r + lookAhead >= rows.length) break;
-                                            const dataRow = rows[r + lookAhead] || [];
-                                            for (let col = 0; col < dataRow.length; col++) {
-                                                const cellVal = dataRow[col] ? dataRow[col].toString().toLowerCase().trim() : '';
-                                                if (['tnps pro', 'promoter', 'promoters', 'tnps pro%'].includes(cellVal)) {
-                                                    matchedChart.nps.promoters = parseNpsValue(getVal(r + lookAhead, col));
-                                                } else if (['neutral', 'passive', 'passives', 'neutral%'].includes(cellVal)) {
-                                                    matchedChart.nps.passives = parseNpsValue(getVal(r + lookAhead, col));
-                                                } else if (['tnps det', 'detractor', 'detractors', 'tnps det%'].includes(cellVal)) {
-                                                    matchedChart.nps.detractors = parseNpsValue(getVal(r + lookAhead, col));
-                                                } else if (['tnps count', 'count', 'base'].includes(cellVal)) {
-                                                    const countVal = getVal(r + lookAhead, col).toString().replace(/,/g, '');
-                                                    matchedChart.nps.count = parseInt(countVal) || 0;
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
+
+                            // 將追蹤到的最新月份數據與比例更新至對應圖表中 (強化防空、防負值除零)
+                            Object.keys(latestMonthPerChart).forEach(chartId => {
+                                const stats = latestMonthPerChart[chartId];
+                                const chart = newCharts.find(c => c.id === parseInt(chartId));
+                                if (chart && stats.count > 0) {
+                                    chart.nps.count = stats.count;
+                                    const proPct = parseFloat(((stats.pro / stats.count) * 100).toFixed(1));
+                                    const detPct = parseFloat(((stats.det / stats.count) * 100).toFixed(1));
+                                    const pasPct = Math.max(0, parseFloat((100 - proPct - detPct).toFixed(1)));
+
+                                    chart.nps.promoters = proPct;
+                                    chart.nps.detractors = detPct;
+                                    chart.nps.passives = pasPct;
+                                }
+                            });
+
                             return newCharts;
                         });
+
                         e.target.value = null;
-                        showToast("Excel imported successfully!");
+                        showToast("✅ Excel imported successfully!");
                     } catch (error) {
                         console.error(error);
-                        showToast("Error parsing Excel file.");
+                        showToast("❌ Error parsing Excel file. Please check format.");
                     }
                 };
                 reader.readAsArrayBuffer(file);
