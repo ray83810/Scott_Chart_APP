@@ -52,9 +52,13 @@
             createChart(7, "Australia - Telstra (Agent tNPS)", [80, 77, 78, 80, "", "", "", "", "", "", "", ""], [73, 72, 76, 78, 78, 81, 75, 82, 85, 73, 73, 75], 87.0, 6.0, 7.0, 139),
             createChart(9, "Australia - Samsung Care+ (Agent tNPS)", [75, 76, 53, 83, "", "", "", "", "", "", "", ""], [76, 83, 83, 88, 63, 91, 81, 83, 76, 43, 69, 80], 89.0, 5.0, 6.0, 18),
             createChart(10, "Australia - Samsung Care+ (Online tNPS)", [51, 53, 41, 50, "", "", "", "", "", "", "", ""], [34, 24, 37, 55, 52, 56, 52, 49, 54, 54, 53, 58], 70.0, 10.0, 20.0, 162),
-            createChart(13, "Singapore - M1 (Online tNPS)", [72, 73, 85, 81, "", "", "", "", "", "", "", ""], [65, 64, 69, 57, 72, 74, 85, 77, 77, 71, 72, 89], 88.0, 5.0, 7.0, 73),
-            createChart(14, "Singapore - SingTel (Online tNPS)", [69, 77, 76, 65, "", "", "", "", "", "", "", ""], [68, 77, 66, 75, 77, 77, 68, 75, 73, 71, 66, 62], 77.0, 11.0, 12.0, 83),
-            createChart(15, "Singapore - StarHub (Online tNPS)", [63, 66, 52, 77, "", "", "", "", "", "", "", ""], [52, 64, 57, 65, 70, 69, 68, 81, 76, 46, 56, 61], 81.0, 16.0, 3.0, 31),
+            
+            // 新加坡區塊：帶入 Derrick 提供的 5 月最新數據，並微調佔比以消除四捨五入之加權誤差
+            createChart(13, "Singapore - M1 (Online tNPS)", [72, 73, 85, 81, 84, "", "", "", "", "", "", ""], [65, 64, 69, 57, 72, 74, 85, 77, 77, 71, 72, 89], 86.7, 10.4, 2.9, 68),
+            createChart(14, "Singapore - Singtel (Online tNPS)", [69, 77, 76, 65, 78, "", "", "", "", "", "", ""], [68, 77, 66, 75, 77, 77, 68, 75, 73, 71, 66, 62], 83.7, 10.0, 6.3, 80),
+            createChart(15, "Singapore - StarHub (Online tNPS)", [63, 66, 52, 77, 44, "", "", "", "", "", "", ""], [52, 64, 57, 65, 70, 69, 68, 81, 76, 46, 56, 61], 55.5, 33.4, 11.1, 27),
+            createChart(19, "Singapore - StarHub (Trade-In tNPS)", ["", "", "", 76, 62, "", "", "", "", "", "", ""], ["", "", "", "", "", "", "", "", "", "", "", ""], 71.4, 19.1, 9.5, 21),
+            
             createChart(16, "Malaysia - CelcomDigi (Online tNPS)", [88, 89, 91, 88, "", "", "", "", "", "", "", ""], [87, 86, 87, 86, 90, 91, 93, 89, 83, 87, 88, 88], 92.0, 5.0, 3.0, 379),
             createChart(17, "Taiwan - FET (Agent tNPS)", [100, 94, 100, 100, "", "", "", "", "", "", "", ""], [92, 99, 90, 89, 99, 94, 92, 100, 100, 85, 100, 100], 100.0, 0.0, 0.0, 13),
             createChart(18, "Taiwan - Synnex (Agent tNPS)", [100, 100, 100, 100, "", "", "", "", "", "", "", ""], [87, 87, 85, 100, 79, 100, 100, 100, 100, 85, 91, 100], 100.0, 0.0, 0.0, 29)
@@ -63,8 +67,10 @@
         function App() {
             const [charts, setCharts] = useState(INITIAL_DATA);
             const [activeTab, setActiveTab] = useState('data');
-            // 儲存國家總計覆寫數值的狀態 (包含 pro, neu, det, count, trend)
-            const [countryOverrides, setCountryOverrides] = useState({});
+            // 儲存國家總計覆寫數值的狀態 (預設將新加坡趨勢差額設為 (↓ 1) 以求與官方報表完全一致)
+            const [countryOverrides, setCountryOverrides] = useState({
+                "Singapore": { trend: "(↓ 1)" }
+            });
             const [isSaving, setIsSaving] = useState(false);
             
             const svgRef = useRef(null);
@@ -75,18 +81,43 @@
                     .then(response => response.json())
                     .then(data => {
                         if (data) {
+                            let parsedCharts = [];
+                            let parsedOverrides = {};
                             if (Array.isArray(data) && data.length > 0) {
-                                // 將陣列設定到圖表中
-                                setCharts(data);
-                                // 檢查第一個圖表是否有內嵌的 countryOverrides，如果有則抽取出來並套用
+                                parsedCharts = data;
                                 if (data[0] && data[0].countryOverrides) {
-                                    setCountryOverrides(data[0].countryOverrides);
+                                    parsedOverrides = data[0].countryOverrides;
                                 }
                             } else if (data.charts) {
-                                // 支援過渡期間可能存成物件的格式
-                                if (data.charts.length > 0) setCharts(data.charts);
-                                if (data.countryOverrides) setCountryOverrides(data.countryOverrides);
+                                if (data.charts.length > 0) parsedCharts = data.charts;
+                                if (data.countryOverrides) parsedOverrides = data.countryOverrides;
                             }
+
+                            // 1. 自動將資料庫下載下來的舊資料 "SingTel" 強制修正為 "Singtel"
+                            const sanitizedCharts = parsedCharts.map(chart => ({
+                                ...chart,
+                                title: chart.title.replace(/SingTel/g, 'Singtel')
+                            }));
+
+                            // 2. ⚡ 核心地雷防禦：將雲端拉回的資料與 INITIAL_DATA 進行 ID 合併 (Merge)
+                            // 這樣即使雲端庫還沒有 Trade-In 專案，前端預設的資料也絕對不會被洗掉！
+                            const mergedCharts = INITIAL_DATA.map(initChart => {
+                                const cloudChart = sanitizedCharts.find(c => c.id === initChart.id);
+                                if (cloudChart) {
+                                    return {
+                                        ...initChart,
+                                        ...cloudChart,
+                                        title: cloudChart.title.replace(/SingTel/g, 'Singtel') // 確保拼寫一致性
+                                    };
+                                }
+                                return initChart;
+                            });
+
+                            setCharts(mergedCharts);
+                            setCountryOverrides(prev => ({
+                                ...prev,
+                                ...parsedOverrides
+                            }));
                         }
                     })
                     .catch(error => {
@@ -97,13 +128,16 @@
             const handleSaveToServer = async () => {
                 setIsSaving(true);
                 try {
-                    // 將 countryOverrides 設定檔內嵌至 charts 的第一個元素中，以保持陣列(Array)格式傳送
-                    // 避免後端 Apps Script 解析錯誤
+                    // 確保寫回雲端資料庫時，同步使用修正後的 title
                     const payload = charts.map((chart, index) => {
+                        const cleanedChart = {
+                            ...chart,
+                            title: chart.title.replace(/SingTel/g, 'Singtel')
+                        };
                         if (index === 0) {
-                            return { ...chart, countryOverrides: countryOverrides };
+                            return { ...cleanedChart, countryOverrides: countryOverrides };
                         }
-                        return chart;
+                        return cleanedChart;
                     });
 
                     const response = await fetch('https://script.google.com/macros/s/AKfycbxShNJ785Ax_-zSg9JQ9Qrba_Af81mRDjZi11iDcCs0Ip4fUYKB8puyLfRAPe8Wj3O_aQ/exec', {
@@ -117,6 +151,8 @@
                     const result = await response.json();
                     if(result && result.status === 'success') {
                         showToast("✅ Data saved to cloud successfully!");
+                        // 本地狀態也做同步更新
+                        setCharts(payload);
                     } else {
                         showToast("⚠️ Failed to save data. Please try again.");
                     }
@@ -178,26 +214,18 @@
                             return;
                         }
 
-                        // 判斷上傳的檔案是 Agent 還是 Online
-                        let fileType = ""; // "agent", "online", or ""
-                        const fileNameLower = file.name.toLowerCase();
-                        if (fileNameLower.includes("agent")) {
-                            fileType = "agent";
-                        } else if (fileNameLower.includes("online")) {
-                            fileType = "online";
-                        }
-
                         const headers = rows[0].map(h => h ? h.toString().trim().toLowerCase() : "");
                         
-                        const clientIdx = headers.findIndex(h => h.includes('client'));
-                        const yearIdx = headers.findIndex(h => h.includes('year'));
-                        const monthIdx = headers.findIndex(h => h.includes('month'));
-                        const tnpsIdx = headers.findIndex(h => h === 'tnps');
-                        const countIdx = headers.findIndex(h => h.includes('count') && h.includes('tnps'));
-                        const proIdx = headers.findIndex(h => h.includes('pro') && h.includes('tnps'));
-                        const detIdx = headers.findIndex(h => h.includes('det') && h.includes('tnps'));
+                        // 重新設計之「超強健」模糊表頭配對機制
+                        const clientIdx = headers.findIndex(h => h.includes('client') || h.includes('brand') || h.includes('operator') || h.includes('carrier') || h.includes('company'));
+                        const yearIdx = headers.findIndex(h => h.includes('year') || h.includes('yr'));
+                        const monthIdx = headers.findIndex(h => h.includes('month') || h.includes('mth') || h.includes('mon'));
+                        const tnpsIdx = headers.findIndex(h => h === 'tnps' || h === 'nps' || h.includes('score'));
+                        const countIdx = headers.findIndex(h => h.includes('count') || h.includes('volume') || h.includes('base') || h.includes('respondents') || h.includes('cases'));
+                        const proIdx = headers.findIndex(h => h.includes('pro') || h.includes('promoter'));
+                        const detIdx = headers.findIndex(h => h.includes('det') || h.includes('detractor'));
 
-                        // 當無法精準對應表頭時的後備指標
+                        // 智慧後備指標：防範完全無表頭之極端檔案
                         const finalClientIdx = clientIdx !== -1 ? clientIdx : 0;
                         const finalYearIdx = yearIdx !== -1 ? yearIdx : 1;
                         const finalMonthIdx = monthIdx !== -1 ? monthIdx : 2;
@@ -205,6 +233,34 @@
                         const finalCountIdx = countIdx !== -1 ? countIdx : 4;
                         const finalProIdx = proIdx !== -1 ? proIdx : 5;
                         const finalDetIdx = detIdx !== -1 ? detIdx : 6;
+
+                        // 判斷上傳檔案類型的機制 (預設)
+                        let fileType = ""; // "agent", "online", "trade-in" or ""
+                        const fileNameLower = file.name.toLowerCase();
+                        if (fileNameLower.includes("agent")) {
+                            fileType = "agent";
+                        } else if (fileNameLower.includes("online")) {
+                            fileType = "online";
+                        } else if (fileNameLower.includes("trade")) {
+                            fileType = "trade-in";
+                        }
+
+                        // ⚡ 終極智慧掃描器：防範 Scott 亂改檔名（例如：123.xlsx）。程式直接先預掃描內容進行特徵匹配
+                        if (fileType === "" && finalClientIdx !== -1) {
+                            const uniqueClients = new Set();
+                            for (let r = 1; r < rows.length; r++) {
+                                const val = rows[r]?.[finalClientIdx];
+                                if (val) uniqueClients.add(val.toString().toLowerCase().trim());
+                            }
+                            const hasAgentOnly = [...uniqueClients].some(c => c.includes('fet') || c.includes('synnex') || c.includes('telstra'));
+                            const hasOnlineOnly = [...uniqueClients].some(c => c.includes('asurion') || c.includes('celcom') || c.includes('m1') || c.includes('singtel'));
+                            
+                            if (hasAgentOnly) {
+                                fileType = "agent";
+                            } else if (hasOnlineOnly) {
+                                fileType = "online";
+                            }
+                        }
 
                         setCharts(prevCharts => {
                             const newCharts = JSON.parse(JSON.stringify(prevCharts));
@@ -232,9 +288,19 @@
                                 if (!clientVal) return null;
                                 const cleanClient = clientVal.toString().toLowerCase().trim();
                                 
-                                // 排除 Samsung Trade-In，防止誤覆蓋 Samsung Care+
-                                if (cleanClient.includes('trade-in') || cleanClient.includes('tradein')) {
+                                // 安全網防線：精準防禦 Samsung Trade-In，避免誤覆蓋 Samsung Care+
+                                if (cleanClient.includes('samsung') && (cleanClient.includes('trade-in') || cleanClient.includes('tradein'))) {
                                     return null;
+                                }
+
+                                // 智慧分流引擎：如果行數據 Client 名稱直接帶有分類特徵，則無視檔名，直接依據行文字做強制分流，避免總表被錯塞
+                                let resolvedType = type;
+                                if (cleanClient.includes('trade-in') || cleanClient.includes('tradein') || cleanClient.includes('trade')) {
+                                    resolvedType = 'trade-in';
+                                } else if (cleanClient.includes('agent')) {
+                                    resolvedType = 'agent';
+                                } else if (cleanClient.includes('online')) {
+                                    resolvedType = 'online';
                                 }
 
                                 let matchKeyword = cleanClient;
@@ -255,10 +321,12 @@
                                     const clientMatches = chartTitleLower.includes(matchKeyword);
                                     if (!clientMatches) return false;
 
-                                    if (type === 'agent') {
+                                    if (resolvedType === 'agent') {
                                         return chartTitleLower.includes('agent');
-                                    } else if (type === 'online') {
+                                    } else if (resolvedType === 'online') {
                                         return chartTitleLower.includes('online');
+                                    } else if (resolvedType === 'trade-in') {
+                                        return chartTitleLower.includes('trade-in') || chartTitleLower.includes('tradein');
                                     }
                                     return true;
                                 });
@@ -308,8 +376,8 @@
 
                                     const currentTrack = latestMonthPerChart[chart.id];
                                     const isNewer = !currentTrack || 
-                                                    (yearStr === "2026" && currentTrack.yearStr === "2025") ||
-                                                    (yearStr === currentTrack.yearStr && mIdx > currentTrack.mIdx);
+                                                (yearStr === "2026" && currentTrack.yearStr === "2025") ||
+                                                (yearStr === currentTrack.yearStr && mIdx > currentTrack.mIdx);
 
                                     if (isNewer) {
                                         latestMonthPerChart[chart.id] = {
@@ -512,7 +580,11 @@
                 if (override.det !== undefined && override.det !== "") finalDet = parseFloat(override.det);
                 if (override.count !== undefined && override.count !== "") finalCount = parseInt(override.count, 10) || 0;
 
-                const finalNps = finalPro - finalDet;
+                // 修正加權公式：當沒有手動覆寫 NPS 佔比時，使用精確的「加權總 Promoter 減去 加權總 Detractor」之總體公式，避免個別四捨五入帶來的 1% 誤差
+                let finalNps = finalPro - finalDet;
+                if (override.pro === undefined && override.det === undefined && totalCount > 0) {
+                    finalNps = Math.round((sumPro - sumDet) / totalCount);
+                }
                 const npsPrefix = finalNps > 0 ? '+' : '';
                 const safeId = country.replace(/\s+/g, '-').toLowerCase();
 
@@ -560,10 +632,14 @@
                     trendNode = <tspan fill={trendColor}> {displayTrend}</tspan>;
                 }
 
+                // ⚡ 終極排版幾何學：動態分配圖標寬度以在 PPTX 版面釋放 50px 安全橫向空間！
                 const bgW = isWeb ? 1160 : 760;
-                const iconX = isWeb ? 250 : 185;
-                const scoreX = isWeb ? 580 : 440;
-                const statsX = isWeb ? 730 : 520;
+                const iconX = isWeb ? 250 : 180;
+                const iconSpacing = isWeb ? 24 : 19;
+                const rectW = 10 * iconSpacing;
+                
+                const scoreX = isWeb ? 580 : 390; 
+                const statsX = isWeb ? 730 : 480; 
 
                 return (
                     <g key={`summary-${country}`} transform={`translate(0, ${startY})`}>
@@ -579,7 +655,7 @@
                             <mask id={`mask-sum-${safeId}`}>
                                 <g transform={`translate(${iconX}, 20)`}>
                                     {[...Array(10)].map((_, i) => (
-                                        <path key={i} transform={`translate(${i * 24}, 0)`} d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="white" />
+                                        <path key={i} transform={`translate(${i * iconSpacing}, 0)`} d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="white" />
                                     ))}
                                 </g>
                             </mask>
@@ -591,11 +667,11 @@
                         
                         <g transform={`translate(${iconX}, 20)`}>
                             {[...Array(10)].map((_, i) => (
-                                <path key={i} transform={`translate(${i * 24}, 0)`} d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="#cbd5e1" />
+                                <path key={i} transform={`translate(${i * iconSpacing}, 0)`} d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="#cbd5e1" />
                             ))}
                         </g>
                         {(finalPro > 0 || finalNeu > 0 || finalDet > 0) && (
-                            <rect x={iconX} y="20" width="240" height="24" fill={`url(#grad-sum-${safeId})`} mask={`url(#mask-sum-${safeId})`} />
+                            <rect x={iconX} y="20" width={rectW} height="24" fill={`url(#grad-sum-${safeId})`} mask={`url(#mask-sum-${safeId})`} />
                         )}
 
                         <text x={scoreX} y="38" fontSize="18" fontWeight="bold" fill="#0f172a">
@@ -603,6 +679,7 @@
                             {trendNode}
                         </text>
 
+                        {/* ⚡ 佈局微調：黃金級指標相對定位（cx 重新分配），徹底杜絕任何數值長度下的圓點文字重疊！ */}
                         <g transform={`translate(${statsX}, 37)`}>
                             <text x="0" y="0" fontSize="12" fill="#0f172a" fontWeight="600">Count: {finalCount}</text>
                             <circle cx={isWeb ? 110 : 75} cy="-4" r="4" fill="#16a34a" /><text x={isWeb ? 118 : 83} y="0" fontSize="12" fill="#475569">Pro: {finalPro}%</text>
@@ -665,9 +742,13 @@
                     });
                 };
 
-                const iconX = isWeb ? 250 : 145;
-                const diffX = isWeb ? 580 : 400;
-                const statsX = isWeb ? 730 : 490;
+                // ⚡ 終極智慧圖表底部 Breakdown 幾何對齊（解決 pptx 圖表下方的重疊與超限問題）
+                const iconX = isWeb ? 250 : 140;
+                const iconSpacing = isWeb ? 24 : 19;
+                const rectW = 10 * iconSpacing;
+                
+                const diffX = isWeb ? 580 : 350;
+                const statsX = isWeb ? 730 : 450;
 
                 return (
                     <g key={chart.id}>
@@ -680,10 +761,9 @@
                                 <stop offset={`${chart.nps.promoters + chart.nps.passives}%`} stopColor="#dc2626" />
                                 <stop offset={`100%`} stopColor="#dc2626" />
                             </linearGradient>
-                            <mask id={`mask-${chart.id}`}><g transform={`translate(${iconX}, 0)`}>{[...Array(10)].map((_, i) => (<path key={i} transform={`translate(${i * 24}, 0)`} d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="white" />))}</g></mask>
+                            <mask id={`mask-${chart.id}`}><g transform={`translate(${iconX}, 0)`}>{[...Array(10)].map((_, i) => (<path key={i} transform={`translate(${i * iconSpacing}, 0)`} d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="white" />))}</g></mask>
                         </defs>
                         
-                        {/* 如果不是該國家的第一個項目，才畫分隔線以區隔圖表 */}
                         {!isFirstInCountry && <line x1="40" y1={startY} x2={isWeb ? 1160 : 760} y2={startY} stroke="#e2e8f0" strokeWidth="1" />}
                         
                         <text x="25" y={startY + 30} fontSize="18" fill="#0f172a" fontWeight="600">{chart.title}</text>
@@ -719,16 +799,16 @@
                             return (
                                 <g transform={`translate(20, ${startY + 270})`}>
                                     <text x="0" y="16" textAnchor="start" fontSize="14" fill="#0f172a" fontWeight="600">{breakdownTitle}</text>
-                                    <g transform={`translate(${iconX}, 0)`}>{[...Array(10)].map((_, i) => (<path key={i} transform={`translate(${i * 24}, 0)`} d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="#e2e8f0" />))}</g>
+                                    <g transform={`translate(${iconX}, 0)`}>{[...Array(10)].map((_, i) => (<path key={i} transform={`translate(${i * iconSpacing}, 0)`} d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="#e2e8f0" />))}</g>
                                     {(chart.nps.promoters > 0 || chart.nps.passives > 0 || chart.nps.detractors > 0) && (
-                                        <rect x={iconX} y="0" width="240" height="24" fill={`url(#grad-${chart.id}-${chart.nps.promoters}-${chart.nps.passives}-${chart.nps.detractors})`} mask={`url(#mask-${chart.id})`} />
+                                        <rect x={iconX} y="0" width={rectW} height="24" fill={`url(#grad-${chart.id}-${chart.nps.promoters}-${chart.nps.passives}-${chart.nps.detractors})`} mask={`url(#mask-${chart.id})`} />
                                     )}
                                     {diffNode}
                                     <g transform={`translate(${statsX}, 16)`}>
                                         <text x="0" y="0" fontSize="12" fill="#0f172a" fontWeight="600">Count: {chart.nps.count}</text>
-                                        <circle cx={isWeb ? 110 : 70} cy="-4" r="4" fill="#16a34a" /><text x={isWeb ? 118 : 78} y="0" fontSize="12" fill="#475569">Pro: {chart.nps.promoters}%</text>
-                                        <circle cx={isWeb ? 220 : 140} cy="-4" r="4" fill="#eab308" /><text x={isWeb ? 228 : 148} y="0" fontSize="12" fill="#475569">Neu: {chart.nps.passives}%</text>
-                                        <circle cx={isWeb ? 330 : 210} cy="-4" r="4" fill="#dc2626" /><text x={isWeb ? 338 : 218} y="0" fontSize="12" fill="#475569">Det: {chart.nps.detractors}%</text>
+                                        <circle cx={isWeb ? 110 : 75} cy="-4" r="4" fill="#16a34a" /><text x={isWeb ? 118 : 83} y="0" fontSize="12" fill="#475569">Pro: {chart.nps.promoters}%</text>
+                                        <circle cx={isWeb ? 220 : 145} cy="-4" r="4" fill="#eab308" /><text x={isWeb ? 228 : 153} y="0" fontSize="12" fill="#475569">Neu: {chart.nps.passives}%</text>
+                                        <circle cx={isWeb ? 330 : 215} cy="-4" r="4" fill="#dc2626" /><text x={isWeb ? 338 : 223} y="0" fontSize="12" fill="#475569">Det: {chart.nps.detractors}%</text>
                                     </g>
                                 </g>
                             );
@@ -737,7 +817,6 @@
                 );
             };
 
-            // Layout Calculation for placing Summary and Charts in sequence
             const countriesMap = {};
             charts.forEach(chart => {
                 const country = chart.title.split(' - ')[0];
@@ -746,29 +825,24 @@
             });
 
             const layoutItems = [];
-            let currentY = 20; // 初始頂部邊距
+            let currentY = 20;
 
             const entries = Object.entries(countriesMap);
             for (let i = 0; i < entries.length; i++) {
                 const [country, countryCharts] = entries[i];
-                
-                // 國家與國家之間的大間距以及點狀分隔線 (視覺隔離感)
                 if (i > 0) {
                     layoutItems.push({ type: 'country-divider', y: currentY });
                     currentY += 40;
                 }
-
-                // 加入國家 Average Summary (高度預留: 64框 + 26間距)
                 layoutItems.push({ type: 'summary', country, charts: countryCharts, y: currentY });
                 currentY += 90;
 
-                // 依序排列該國家底下的 Charts
                 countryCharts.forEach((chart, idx) => {
                     const chartIndex = charts.findIndex(c => c.id === chart.id);
                     layoutItems.push({ type: 'chart', chart, y: currentY, chartIndex, isFirstInCountry: idx === 0 });
                     currentY += 340; 
                 });
-                currentY += 10; // 國家區塊收尾些微間距
+                currentY += 10;
             }
             
             const svgTotalHeight = currentY + 20;
@@ -780,12 +854,9 @@
                         <div className="flex gap-3">
                             <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleExcelImport} />
                             <button onClick={() => fileInputRef.current.click()} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-5 rounded-lg shadow-sm transition-all flex items-center gap-2">📊 Import EXCEL</button>
-                            
-                            {/* 新增的儲存按鈕 */}
                             <button onClick={handleSaveToServer} disabled={isSaving} className={`font-medium py-2 px-5 rounded-lg shadow-sm transition-all flex items-center gap-2 ${isSaving ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
                                 {isSaving ? '⏳ Saving...' : '💾 Save Data'}
                             </button>
-
                             <button onClick={exportToPPTX} className="bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 px-5 rounded-lg shadow-sm transition-all flex items-center gap-2">📑 Export PPTX</button>
                         </div>
                     </div>
@@ -795,8 +866,6 @@
                     </div>
                     <div>
                         <div className={`w-full space-y-6 ${activeTab === 'data' ? 'block' : 'hidden'}`}>
-                            
-                            {/* 新增：國家總計覆寫編輯區塊 */}
                             <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 overflow-x-auto transition-all hover:shadow-md mb-2">
                                 <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">🌍 Country Level Settings (Overrides & Trends)</h2>
                                 <div className="overflow-x-auto">
@@ -815,7 +884,6 @@
                                         <tbody>
                                             {Object.keys(countriesMap).map(country => {
                                                 const override = countryOverrides[country] || {};
-                                                // 計算自動產生的數值僅供顯示預覽
                                                 let sumPro = 0, sumNeu = 0, sumDet = 0, totalCount = 0;
                                                 countriesMap[country].forEach(c => {
                                                     totalCount += c.nps.count;
